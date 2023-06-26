@@ -9,4 +9,5 @@ DATES = START_DATE + '-' + FINAL_DATE
 CODES_PATH = f'./data/{DATES}/codes/'
 USERNAME = environ['username']
 PASSWORD = environ['password']
-URL_LOGIN = 'https://rep.mariinsky.ru/Account/Login'
+URL_LOGIN = environ['url_login']
+URL_EVENT = environ['url_event']
