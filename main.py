@@ -134,9 +134,8 @@ class User:
         perfs_rehs (str): 'perfs' or 'rehs'
         men_women (str): 'men' or 'women'
     """
+
     def __init__(self):
-        self.json_path = f'./data/{DATES}/json/'
-        self.csv_path = f'./data/{DATES}/csv/'
         self.bar_format = \
             '{desc}:|{bar}|{percentage:3.0f}% {n_fmt}/{total_fmt} [{elapsed}]'
         self.session = self.login_via_requests()
@@ -162,7 +161,7 @@ class User:
         Returns:
             List of names and roles.
         """
-        sleep(randint(1, 4))
+        sleep(randint(1, 2))
         menu_code = '?a=9' if ballet_extras == 'ballet' else '?a=11'
         style_tag = 'padding-left: 5px; border: 1px solid gray;'
         event_url = f'{URL_EVENT}{event_code}{menu_code}'
@@ -284,47 +283,54 @@ class User:
         Returns:
             Tuple of feature and secure participant names with counters.
         """
-        with open(f'{CODES_PATH}{ballet_extras}_{perfs_rehs}') as codes:
-            extras_codes = set(codes.read().split())
-
+        extras_codes = self.__get_codes('extras', perfs_rehs)
         if ballet_extras == 'ballet':
-            with open(f'{CODES_PATH}{ballet_extras}_{perfs_rehs}') as codes:
-                ballet_codes = set(codes.read().split())
+            ballet_codes = self.__get_codes('ballet', perfs_rehs)
             return self.count_ballet(ballet_codes, extras_codes, perfs_rehs)
-        else:
-            return self.count_extras(extras_codes, perfs_rehs)
+        return self.count_extras(extras_codes, perfs_rehs)
+
+    @staticmethod
+    def __get_codes(ballet_extras: str, perfs_rehs: str) -> set:
+        """Get ballet or extras perfs or rehs codes from corresponding file.
+
+        Returns:
+            Set of codes
+        """
+        with open(f'{CODES_PATH}{ballet_extras}_{perfs_rehs}') as codes:
+            return set(codes.read().split())
 
     def run_parser(self, ballet_extras: str, perfs_rehs: str):
         """Writes ballet and extras feature and secure to json file in format:
         {name: events' counter}"""
         feat, secure = self.__get_all_codes(ballet_extras, perfs_rehs)
 
-        if not path.isdir(self.json_path):
-            makedirs(self.json_path)
+        if not path.isdir(JSON_PATH):
+            makedirs(JSON_PATH)
 
         for feat_secure in zip((feat, secure), ('feat', 'secure')):
             # Remove empty values
             if '' in feat_secure[0]:
                 del feat_secure[0]['']
-            json_file = f'{self.json_path}{ballet_extras}_{feat_secure[1]}_' \
-                        f'{perfs_rehs}.json'
+            json_file = f'{JSON_PATH}{ballet_extras}_' \
+                        f'{feat_secure[1]}_{perfs_rehs}.json'
             with open(json_file, 'w', encoding='utf-8') as file:
                 dump(feat_secure[0], file, indent=4, ensure_ascii=False)
 
-    def aggregate_to_csv(self, ballet_extras: str, men_women: str):
-        """Converts json to csv and writes to file."""
+    @staticmethod
+    def aggregate_to_csv(ballet_extras: str, men_women: str):
+        """Aggregates json to csv and writes to file."""
 
         # Create a new table with the names from a staff module
         event_and_sex = f'{ballet_extras}_{men_women}'
-        csv_file = f'{self.csv_path}{event_and_sex}_{DATES}.csv'
+        csv_file = f'{CSV_PATH}{event_and_sex}_{DATES}.csv'
         new_table = {person: [0, 0, 0, 0] for person in eval(event_and_sex)}
 
         # Column index for each of 4 columns
         column_index = 0
         for perf_reh in ('perfs', 'rehs'):
             for feat_secure in ('feat', 'secure'):
-                json_file = f'{self.json_path}{ballet_extras}_{feat_secure}_' \
-                            f'{perf_reh}.json'
+                json_file = f'{JSON_PATH}{ballet_extras}_' \
+                            f'{feat_secure}_{perf_reh}.json'
                 with open(json_file, encoding='utf-8') as file:
                     table = load(file)
                 for person in eval(event_and_sex):
@@ -342,8 +348,8 @@ class User:
         rows = [[key, *value] for key, value in
                 sorted(new_table.items(), key=lambda x: x[1], reverse=True)]
 
-        if not path.isdir(self.csv_path):
-            makedirs(self.csv_path)
+        if not path.isdir(CSV_PATH):
+            makedirs(CSV_PATH)
         with open(csv_file, 'w', encoding='utf-8', newline='\n') as file:
             writer(file).writerows(rows)
 
@@ -352,7 +358,7 @@ class User:
 
         xls_path = f'./data/{DATES}/xls/'
         xls_file = f'{xls_path}{ballet_extras}_{men_women}_{DATES}.xlsx'
-        csv_file = f'{self.csv_path}{ballet_extras}_{men_women}_{DATES}.csv'
+        csv_file = f'{CSV_PATH}{ballet_extras}_{men_women}_{DATES}.csv'
         workbook = load_workbook('./templates/excel/template.xlsx')
         worksheet = workbook.active
         worksheet.cell(1, 1).value = DATES
@@ -374,7 +380,7 @@ class User:
 
 def main():
     # Login via webdriver and collect all codes
-    Driver().get_all_codes()
+    # Driver().get_all_codes()
 
     user = User()
     # Parse through events to get json
