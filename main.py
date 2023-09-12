@@ -1,37 +1,49 @@
-from auxilary import remove_brackets
-from bs4 import BeautifulSoup as bs
+"""
+These args are frequently used in this module, so I decided not to cram
+every function description and bring them away to a class description.
+Every arg takes strictly one of two values:
+    event_type (str): 'ballet' or 'extras'
+    action_type (str): 'perfs' or 'rehs'
+    participation_type (str): 'feat' or 'secure'
+    gender (str): 'men' or 'women'
+"""
+
+import csv
+import json
+import logging
+import os
+import random
+import re
+import time
+from typing import Tuple, List, Dict, Set
+
+import bs4
+import openpyxl
+import requests
+import xpaths as xp
 from config import *
-from csv import writer, reader
-from json import load, dump
-from openpyxl import load_workbook
-from os import makedirs, path
-from random import randint
-from re import search
-from requests import Session, post
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.keys import Keys
-from time import sleep
 from tqdm import tqdm
-from typing import Tuple, List
-# Staff is required for eval(event_and_sex) in aggregate_to_csv function.
+from utils import remove_brackets
+# staff.staff is required for eval(event_and_sex) in aggregate_to_csv function.
 from staff.staff import ballet_men, ballet_women, extras_men, extras_women
 
-
-# TODO: Add tests
-# TODO: Add logging
-# TODO: Add SQL
+logging.basicConfig(
+    format='%(asctime)s - %(message)s',
+    datefmt='%d-%b-%y %H:%M:%S',
+    level=logging.INFO
+)
 
 
 class Driver:
     def __init__(self):
         self.rehs_common = {'Реп.', 'Сц. фп.', 'Орк. сцен. реп.', 'Ген. реп.'}
         self.skip_part_common = {'Явка на грим', '(сверка)'}
-        options = webdriver.FirefoxOptions()
-        options.set_preference("dom.webdriver.enabled", False)
-        self.__driver = webdriver.Firefox(options=options)
+        self.__driver: webdriver
 
     # Shorten frequently used Webdriver methods for better readability
     def __dfid(self, ID: str):
@@ -43,198 +55,199 @@ class Driver:
     def __dfsx(self, xpath: str):
         return self.__driver.find_elements(By.XPATH, xpath)
 
-    def __wdwid(self, ID: str):
-        wait_time = 60
+    def __wdwid(self, ID: str, wait_time: int = 60):
         WebDriverWait(self.__driver, wait_time).until(
             ec.presence_of_element_located((By.ID, ID)))
 
-    def __login_via_webdriver(self):
-        """Login via webdriver. Enter username and password"""
+    def __login(self) -> None:
+        """
+        Runs webdriver. Enters username and password. On the next page enters
+        start and final dates.
+        """
         date_len = 8  # DDMMYYYY
+        options = webdriver.FirefoxOptions()
+        options.set_preference("dom.webdriver.enabled", False)
+        self.__driver = webdriver.Firefox(options=options)
+        logging.info('Webdriver starts')
         self.__driver.get(URL_LOGIN)
-        self.__wdwid('InputL')
-        self.__dfid('InputL').send_keys(USERNAME)
-        self.__dfid('InputP').send_keys(PASSWORD, Keys.ENTER)
-        self.__wdwid('startDate')
+        self.__wdwid(xp.username)
+        self.__dfid(xp.username).send_keys(USERNAME)
+        logging.info('Enters username')
+        self.__dfid(xp.password).send_keys(PASSWORD, Keys.ENTER)
+        logging.info('Enters password')
+        self.__wdwid(xp.start_date)
 
         # Clear previous start date and enter a new one
-        date = self.__dfid('startDate')
+        date = self.__dfid(xp.start_date)
         for _ in range(date_len):
             date.send_keys(Keys.BACKSPACE)
-        date.send_keys(START_DATE)
+        date.send_keys(start_date)
+        logging.info('Enters start date')
 
         # Clear previous final date and enter a new one
-        date = self.__dfid('finishDate')
+        date = self.__dfid(xp.final_date)
         for _ in range(date_len):
             date.send_keys(Keys.BACKSPACE)
-        date.send_keys(FINAL_DATE)
+        date.send_keys(final_date)
+        logging.info('Enters final date')
 
-    def __get_codes(self, ballet_extras: str, rehs_keywords: set,
-                    skip_part: set):
-        """Gets unique event codes and writes them to 2 files with
+    def __get_codes(self, event_type: str, rehs_keywords: Set,
+                    skip_part: Set) -> None:
+        """
+        Gets unique event codes and writes them to 2 files with
         corresponding names.
         Click dropdown menu -> choose ballet or extras -> click 'Submit'
-
         Args:
-            ballet_extras: 'ballet' or 'extras'
             rehs_keywords: Get event code if the link text is in these keywords
             skip_part: Skip event code if the link text is in these keywords
         """
         perfs_codes, rehs_codes = set(), set()
-        menu_code = '3' if ballet_extras == 'ballet' else '6'
-        self.__dfx("//div[@class='btn-group bootstrap-select']").click()
-        self.__dfx(f"//li[@data-original-index='{menu_code}']").click()
-        self.__dfid('submit').click()
+        self.__dfx(xp.dropdown_menu).click()
+        self.__dfx(xp.dropdown_menu_option(event_type)).click()
+        self.__dfid(xp.submit).click()
+        logging.info(f'Chooses {event_type}')
 
         # The url between ballet and extras does not change due to JS code,
         # so use time.sleep(10) instead of WebDriverWait. Usually 10 sec is
         # enough for a month period, but might be incremented if needed.
-        sleep(10)
-        links = self.__dfsx("//a[contains(@href, '/Home/MoreInfo/')]")
+        time.sleep(10)
+        links = self.__dfsx(xp.links)
         for link in links:
-            code = search(r'\d+', link.get_attribute('href')).group()
+            code = re.search(r'\d+', link.get_attribute('href')).group()
             if any(event in link.text for event in skip_part):
                 pass
             elif any(event in link.text for event in rehs_keywords):
                 rehs_codes.add(code)
             else:
                 perfs_codes.add(code)
+        logging.info(f'{event_type} links received')
 
-        for perf_reh in zip((perfs_codes, rehs_codes), ('perfs', 'rehs')):
-            with open(f'{CODES_PATH}{ballet_extras}_{perf_reh[1]}', 'w') as f:
-                for code in sorted(perf_reh[0]):
-                    f.write(code + '\n')
+        for action_type in zip((perfs_codes, rehs_codes), (PERFS, REHS)):
+            with open(
+                    f'{codes_path}{event_type}_{action_type[1]}', 'w') as file:
+                for code in sorted(action_type[0]):
+                    file.write(code + '\n')
+        logging.info(f'{event_type} codes are written to file')
 
-    def get_all_codes(self):
+    def get_all_codes(self) -> None:
         """Gets all codes for the ballet and extras"""
-        if not path.isdir(CODES_PATH):
-            makedirs(CODES_PATH)
-        self.__login_via_webdriver()
+        if not os.path.isdir(codes_path):
+            os.makedirs(codes_path)
+        self.__login()
 
         # Adds specific keywords for the ballet rehs and ballet skip part
         ballet_rehs = self.rehs_common.union({'+балет'})
         ballet_skip_part = self.skip_part_common.union({'Урок балета'})
-        self.__get_codes('ballet', ballet_rehs, ballet_skip_part)
+        self.__get_codes(BALLET, ballet_rehs, ballet_skip_part)
+        logging.info(f'{BALLET} codes received')
 
         # Adds specific keywords for the extras rehs and extras skip part
         extras_rehs = self.rehs_common.union({'Тех. работы', 'миманс'})
         extras_skip_part = self.skip_part_common.union({'Занятие +миманс'})
-        self.__get_codes('extras', extras_rehs, extras_skip_part)
+        self.__get_codes(EXTRAS, extras_rehs, extras_skip_part)
+        logging.info(f'{EXTRAS} codes received')
 
         self.__driver.quit()
+        logging.info('Webdriver quits')
 
 
 class User:
-    """
-    These args are frequently used in this class, so I decided not to cram
-    every function description and bring them away to a class description.
-    Every arg takes strictly one of two values.
-    Args:
-        ballet_extras (str): 'ballet' or 'extras'
-        perfs_rehs (str): 'perfs' or 'rehs'
-        men_women (str): 'men' or 'women'
-    """
-
     def __init__(self):
-        self.bar_format = \
-            '{desc}:|{bar}|{percentage:3.0f}% {n_fmt}/{total_fmt} [{elapsed}]'
-        self.session = self.login_via_requests()
+        self.session = self.login()
 
     @staticmethod
-    def login_via_requests() -> Session:
-        """Login via requests.
-
+    def login() -> requests.Session:
+        """
+        Login via requests.
         Returns:
             requests.Session()
         """
-        user_data = {'UserName': USERNAME, 'Password': PASSWORD}
-        session = Session()
-        session.post(URL_LOGIN, data=user_data)
+        session = requests.Session()
+        session.post(URL_LOGIN, {'UserName': USERNAME, 'Password': PASSWORD})
+        logging.info('Session received')
         return session
 
-    def __parse_table(self, event_code: str, ballet_extras: str) -> List:
-        """Parses event table with participant names and roles.
-
+    def __parse_table(self, event_code: str, event_type: str) -> List:
+        """
+        Parses event table with participant names and roles.
         Args:
             event_code: unique event code from any file in ./data/codes/
-
         Returns:
             List of names and roles.
         """
-        sleep(randint(1, 2))
-        menu_code = '?a=9' if ballet_extras == 'ballet' else '?a=11'
+        time.sleep(random.randint(1, 2))
+        menu_code = '?a=9' if event_type == BALLET else '?a=11'
         style_tag = 'padding-left: 5px; border: 1px solid gray;'
         event_url = f'{URL_EVENT}{event_code}{menu_code}'
-        request = post(event_url, cookies=self.session.cookies)
-        return bs(request.text, 'lxml').find_all('td', style=style_tag)
+        request = requests.post(event_url, cookies=self.session.cookies)
+        return bs4.BeautifulSoup(
+            request.text, 'lxml').find_all('td', style=style_tag)
 
-    def count_ballet(self, ballet_codes: set, extras_codes: set,
-                     perfs_rehs: str) -> Tuple[dict[set], dict[set]]:
-        """Parses html page with ballet codes.
-
+    def count_ballet(self, ballet_codes: Set, extras_codes: Set,
+                     action_type: str) -> Tuple[dict[str:int], dict[str:int]]:
+        """
+        Parses html page with ballet codes.
         Args:
             ballet_codes: unique perfs or rehs code from ./data/codes/ballet_*
             extras_codes: unique perfs or rehs code from ./data/codes/extras_*
-
         Returns:
             Tuple of feature and secure ballet participant names with counters.
         """
         feats, secures = {}, {}
         all_codes = ballet_codes.union(extras_codes)
 
-        for event_code in tqdm(all_codes, desc=f'Ballet {perfs_rehs}',
-                               bar_format=self.bar_format, dynamic_ncols=True):
+        for event_code in tqdm(all_codes, desc=f'{BALLET} {action_type}',
+                               bar_format=bar_format, dynamic_ncols=True):
             feat, secure = set(), set()
-            for ballet_extras in zip(
-                    (ballet_codes, extras_codes), ('ballet', 'extras')):
-                if event_code in ballet_extras[0]:
+            for event_type in zip((ballet_codes, extras_codes),
+                                  (BALLET, EXTRAS)):
+                if event_code in event_type[0]:
                     self.__count_participants(
-                        ballet_extras[1], event_code, feat, secure)
+                        event_type[1], event_code, feat, secure)
             self.__overflow_participants(feat, secure, feats, secures)
 
         return feats, secures
 
-    def count_extras(self, extras_codes: set, perfs_rehs: str
-                     ) -> Tuple[dict[set], dict[set]]:
-        """Parses html page with extras codes.
-
+    def count_extras(self, extras_codes: Set, action_type: str
+                     ) -> Tuple[dict[str:int], dict[str:int]]:
+        """
+        Parses html page with extras codes.
         Args:
             extras_codes: unique perfs or rehs code from ./data/codes/extras_*
-
         Returns:
-           Tuple of feature and secure extras participant names with counters.
+            Tuple of feature and secure extras participant names with counters.
         """
         feats, secures = {}, {}
 
-        for event_code in tqdm(extras_codes, desc=f'Extras {perfs_rehs}',
-                               bar_format=self.bar_format, dynamic_ncols=True):
+        for event_code in tqdm(extras_codes, desc=f'{EXTRAS} {action_type}',
+                               bar_format=bar_format, dynamic_ncols=True):
             feat, secure = set(), set()
-            self.__count_participants('extras', event_code, feat, secure)
+            self.__count_participants(EXTRAS, event_code, feat, secure)
             self.__overflow_participants(feat, secure, feats, secures)
 
         return feats, secures
 
-    def __count_participants(self, ballet_extras: str, event_code: str,
-                             feat: set, secure: set):
-        """Counts number of participations in each event.
-
+    def __count_participants(self, event_type: str, event_code: str,
+                             feat: Set, secure: Set) -> None:
+        """
+        Counts number of participations in each event.
         Args:
             event_code: unique perfs or rehs code from ./data/codes/*
             feat: names of featured participants
             secure: names of secure participants
         """
         table = [person.text.strip() for person in
-                 self.__parse_table(event_code, ballet_extras)]
-        people = self.__distribute_participants(table)
-        feat.update(people[0])
-        secure.update(people[1])
+                 self.__parse_table(event_code, event_type)]
+        person_feat, person_secure = self.__distribute_participants(table)
+        feat.update(person_feat)
+        secure.update(person_secure)
 
     @staticmethod
-    def __overflow_participants(feat: set, secure: set, events_feat: dict,
-                                events_secure: dict):
-        """Overflows featured participants from secure event to feat event and
+    def __overflow_participants(feat: Set, secure: Set, events_feat: Dict,
+                                events_secure: Dict) -> None:
+        """
+        Overflows featured participants from secure event to feat event and
         add to corresponding dictionaries with event counters.
-
         Args:
             feat: names of featured participants
             secure: names of secure participants
@@ -248,13 +261,12 @@ class User:
             events_secure[person] = events_secure.get(person, 0) + 1
 
     @staticmethod
-    def __distribute_participants(table: list) -> Tuple[set[str], set[str]]:
-        """Distributes participants in 2 sets: by feature and secure. Skip the
+    def __distribute_participants(table: List) -> Tuple[Set[str], Set[str]]:
+        """
+        Distributes participants in 2 sets: by feature and secure. Skip the
         row, if name is in the skip part. Remove brackets and text inside.
-
         Args:
             table: list of 3 columns: Role | Feature | Secure.
-
         Returns:
             Tuple of feature and secure sets with participant names.
         """
@@ -275,64 +287,59 @@ class User:
 
         return feat, secure
 
-    def __get_all_codes(self, ballet_extras: str, perfs_rehs: str
-                        ) -> Tuple[dict[set], dict[set]]:
-        """Gets all codes. For the ballet we need both ballet and extras codes.
+    def __get_all_codes(self, event_type: str, action_type: str
+                        ) -> Tuple[dict[str:int], dict[str:int]]:
+        """
+        Gets all codes. For the ballet we need both ballet and extras codes.
         For the extras we need only extras codes.
-
         Returns:
             Tuple of feature and secure participant names with counters.
         """
-        extras_codes = self.__get_codes('extras', perfs_rehs)
-        if ballet_extras == 'ballet':
-            ballet_codes = self.__get_codes('ballet', perfs_rehs)
-            return self.count_ballet(ballet_codes, extras_codes, perfs_rehs)
-        return self.count_extras(extras_codes, perfs_rehs)
+        with open(f'{codes_path}{EXTRAS}_{action_type}') as codes:
+            extras_codes = set(codes.read().split())
+        if event_type == BALLET:
+            with open(f'{codes_path}{BALLET}_{action_type}') as codes:
+                ballet_codes = set(codes.read().split())
+            return self.count_ballet(ballet_codes, extras_codes, action_type)
+        return self.count_extras(extras_codes, action_type)
 
-    @staticmethod
-    def __get_codes(ballet_extras: str, perfs_rehs: str) -> set:
-        """Get ballet or extras perfs or rehs codes from corresponding file.
-
-        Returns:
-            Set of codes
+    def run_parser(self, event_type: str, action_type: str) -> None:
         """
-        with open(f'{CODES_PATH}{ballet_extras}_{perfs_rehs}') as codes:
-            return set(codes.read().split())
+        Writes ballet and extras feature and secure to json file in format:
+        {name: events' counter}
+        """
+        feat, secure = self.__get_all_codes(event_type, action_type)
 
-    def run_parser(self, ballet_extras: str, perfs_rehs: str):
-        """Writes ballet and extras feature and secure to json file in format:
-        {name: events' counter}"""
-        feat, secure = self.__get_all_codes(ballet_extras, perfs_rehs)
+        if not os.path.isdir(json_path):
+            os.makedirs(json_path)
 
-        if not path.isdir(JSON_PATH):
-            makedirs(JSON_PATH)
-
-        for feat_secure in zip((feat, secure), ('feat', 'secure')):
+        for participation_type in zip((feat, secure), (FEAT, SECURE)):
             # Remove empty values
-            if '' in feat_secure[0]:
-                del feat_secure[0]['']
-            json_file = f'{JSON_PATH}{ballet_extras}_' \
-                        f'{feat_secure[1]}_{perfs_rehs}.json'
+            if '' in participation_type[0]:
+                del participation_type[0]['']
+            json_file = f'{json_path}{event_type}_{participation_type[1]}_' \
+                        f'{action_type}.json'
             with open(json_file, 'w', encoding='utf-8') as file:
-                dump(feat_secure[0], file, indent=4, ensure_ascii=False)
+                json.dump(participation_type[0], file, indent=4,
+                          ensure_ascii=False)
 
     @staticmethod
-    def aggregate_to_csv(ballet_extras: str, men_women: str):
+    def aggregate_to_csv(event_type: str, gender: str) -> None:
         """Aggregates json to csv and writes to file."""
 
         # Create a new table with the names from a staff module
-        event_and_sex = f'{ballet_extras}_{men_women}'
-        csv_file = f'{CSV_PATH}{event_and_sex}_{DATES}.csv'
+        event_and_sex = f'{event_type}_{gender}'
+        csv_file = f'{csv_path}{event_and_sex}_{dates}.csv'
         new_table = {person: [0, 0, 0, 0] for person in eval(event_and_sex)}
 
         # Column index for each of 4 columns
         column_index = 0
-        for perf_reh in ('perfs', 'rehs'):
-            for feat_secure in ('feat', 'secure'):
-                json_file = f'{JSON_PATH}{ballet_extras}_' \
-                            f'{feat_secure}_{perf_reh}.json'
+        for action_type in (PERFS, REHS):
+            for participation_type in (FEAT, SECURE):
+                json_file = f'{json_path}{event_type}_{participation_type}_' \
+                            f'{action_type}.json'
                 with open(json_file, encoding='utf-8') as file:
-                    table = load(file)
+                    table = json.load(file)
                 for person in eval(event_and_sex):
                     if person in table:
                         new_table[person][column_index] += table[person]
@@ -348,24 +355,24 @@ class User:
         rows = [[key, *value] for key, value in
                 sorted(new_table.items(), key=lambda x: x[1], reverse=True)]
 
-        if not path.isdir(CSV_PATH):
-            makedirs(CSV_PATH)
+        if not os.path.isdir(csv_path):
+            os.makedirs(csv_path)
         with open(csv_file, 'w', encoding='utf-8', newline='\n') as file:
-            writer(file).writerows(rows)
+            csv.writer(file).writerows(rows)
 
-    def write_to_xls(self, ballet_extras: str, men_women: str):
+    @staticmethod
+    def write_to_xls(event_type: str, gender: str) -> None:
         """Writes csv to prepared xls template."""
-
-        xls_path = f'./data/{DATES}/xls/'
-        xls_file = f'{xls_path}{ballet_extras}_{men_women}_{DATES}.xlsx'
-        csv_file = f'{CSV_PATH}{ballet_extras}_{men_women}_{DATES}.csv'
-        workbook = load_workbook('./templates/excel/template.xlsx')
+        xls_file = f'{xls_path}{event_type}_{gender}_{dates}.xlsx'
+        csv_file = f'{csv_path}{event_type}_{gender}_{dates}.csv'
+        workbook = openpyxl.load_workbook(workbook_path)
         worksheet = workbook.active
-        worksheet.cell(1, 1).value = DATES
-        last_row_index = 66  # extras_men
+        worksheet.cell(1, 1).value = dates
+        # Index of the longest row in all the documents
+        last_row_index = 66
 
         with open(csv_file, encoding='utf-8', newline='\n') as file:
-            for row_index, row in enumerate(reader(file), start=11):
+            for row_index, row in enumerate(csv.reader(file), start=11):
                 for col_index, value in enumerate(row, start=1):
                     worksheet.cell(row_index, col_index).value = value
             # Remove excessive values
@@ -373,26 +380,24 @@ class User:
                 if worksheet.cell(row, 1).value is None:
                     worksheet.cell(row, 6).value = None
 
-        if not path.isdir(xls_path):
-            makedirs(xls_path)
+        if not os.path.isdir(xls_path):
+            os.makedirs(xls_path)
         workbook.save(filename=xls_file)
 
 
 def main():
     # Login via webdriver and collect all codes
-    # Driver().get_all_codes()
+    Driver().get_all_codes()
 
     user = User()
     # Parse through events to get json
-    for ballet_extras in ('ballet', 'extras'):
-        for perfs_rehs in ('perfs', 'rehs'):
-            user.run_parser(ballet_extras, perfs_rehs)
-
-    # Aggregate and convert json to csv. Write csv to xls
-    for ballet_extras in ('ballet', 'extras'):
-        for men_women in ('men', 'women'):
-            user.aggregate_to_csv(ballet_extras, men_women)
-            user.write_to_xls(ballet_extras, men_women)
+    for event_type in (BALLET, EXTRAS):
+        for action_type in (PERFS, REHS):
+            user.run_parser(event_type, action_type)
+        # Aggregate and convert json to csv. Write csv to xls
+        for gender in (MEN, WOMEN):
+            user.aggregate_to_csv(event_type, gender)
+            user.write_to_xls(event_type, gender)
 
 
 if __name__ == '__main__':
