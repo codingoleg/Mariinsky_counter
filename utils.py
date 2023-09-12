@@ -1,7 +1,7 @@
 from datetime import datetime
 
 
-def remove_brackets(text: str):
+def remove_brackets(text: str) -> str:
     """Remove brackets and text inside"""
     if any(bracket in ('(', ')') for bracket in text):
         ret = ''
@@ -18,7 +18,7 @@ def remove_brackets(text: str):
     return text.strip()
 
 
-def validate_dates(start_date: str, final_date: str):
+def validate_dates(start_date: str, final_date: str) -> None:
     """Check for dates' validity"""
     start = datetime.strptime(start_date, '%d.%m.%Y')
     final = datetime.strptime(final_date, '%d.%m.%Y')
