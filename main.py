@@ -105,7 +105,7 @@ class Driver:
         self.__dfx(xp.dropdown_menu).click()
         self.__dfx(xp.dropdown_menu_option(event_type)).click()
         self.__dfid(xp.submit).click()
-        logging.info(f'Chooses {event_type}')
+        logging.info(f'Choose {event_type} from menu')
 
         # The url between ballet and extras does not change due to JS code,
         # so use time.sleep(10) instead of WebDriverWait. Usually 10 sec is
@@ -127,7 +127,6 @@ class Driver:
                     f'{codes_path}{event_type}_{action_type[1]}', 'w') as file:
                 for code in sorted(action_type[0]):
                     file.write(code + '\n')
-        logging.info(f'{event_type} codes are written to file')
 
     def get_all_codes(self) -> None:
         """Gets all codes for the ballet and extras"""
