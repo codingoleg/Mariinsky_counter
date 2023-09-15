@@ -1,4 +1,4 @@
-from config import BALLET
+from constants import BALLET
 
 
 def dropdown_menu_option(ballet_extras):
