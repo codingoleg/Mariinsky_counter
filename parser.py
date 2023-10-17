@@ -359,24 +359,27 @@ class Data:
     @staticmethod
     def write_to_xls(event_type: str, gender: str) -> None:
         """Writes csv to prepared xls template."""
+
+        # Index of the start and last rows and columns, that contains data in all the documents
+        start_row, start_col = 11, 1
+        last_row, last_col = 66, 6
+
         xls_file = f'{XLS_PATH}{event_type}_{gender}_{DATES}.xlsx'
         csv_file = f'{CSV_PATH}{event_type}_{gender}_{DATES}.csv'
         workbook = openpyxl.load_workbook(WORKBOOK_PATH)
         worksheet = workbook.active
         worksheet.cell(1, 1).value = DATES
-        # Index of the longest row in all the documents
-        last_row_index = 66
 
         with open(csv_file, encoding='utf-8', newline='\n') as file:
 
-            for row_index, row in enumerate(csv.reader(file), start=11):
-                for col_index, value in enumerate(row, start=1):
+            for row_index, row in enumerate(csv.reader(file), start=start_row):
+                for col_index, value in enumerate(row, start=start_col):
                     worksheet.cell(row_index, col_index).value = value
 
             # Remove excessive values
-            for row in range(row_index, last_row_index):
+            for row in range(row_index, last_row):
                 if worksheet.cell(row, 1).value is None:
-                    worksheet.cell(row, 6).value = None
+                    worksheet.cell(row, last_col).value = None
 
         if not os.path.isdir(XLS_PATH):
             os.makedirs(XLS_PATH)
