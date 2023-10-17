@@ -20,15 +20,17 @@ from typing import Tuple, List, Dict, Set
 import bs4
 import openpyxl
 import requests
-import xpaths as xp
-from config import *
-from constants import *
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.keys import Keys
 from tqdm import tqdm
+
+import xpaths as xp
+from constants import DATES, CODES_PATH, JSON_PATH, CSV_PATH, XLS_PATH, WORKBOOK_PATH
+from constants import BALLET, EXTRAS, FEAT, SECURE, PERFS, REHS, BAR_FORMAT
+from config import USERNAME, PASSWORD, URL_LOGIN, URL_EVENT, START_DATE, FINAL_DATE
 from utils import remove_brackets
 # staff.staff is required for eval(event_and_sex) in aggregate_to_csv function.
 from staff.staff import ballet_men, ballet_women, extras_men, extras_women
@@ -57,8 +59,7 @@ class Driver:
         return self.__driver.find_elements(By.XPATH, xpath)
 
     def __wdwid(self, ID: str, wait_time: int = 60):
-        WebDriverWait(self.__driver, wait_time).until(
-            ec.presence_of_element_located((By.ID, ID)))
+        WebDriverWait(self.__driver, wait_time).until(ec.presence_of_element_located((By.ID, ID)))
 
     def __login(self) -> None:
         """
@@ -92,8 +93,7 @@ class Driver:
         date.send_keys(FINAL_DATE)
         logging.info('Enters final date')
 
-    def __get_codes(self, event_type: str, rehs_keywords: Set,
-                    skip_part: Set) -> None:
+    def __get_codes(self, event_type: str, rehs_keywords: Set, skip_part: Set) -> None:
         """
         Gets unique event codes and writes them to 2 files with
         corresponding names.
@@ -103,8 +103,9 @@ class Driver:
             skip_part: Skip event code if the link text is in these keywords
         """
         perfs_codes, rehs_codes = set(), set()
+        menu_code = '3' if event_type == BALLET else '6'
         self.__dfx(xp.dropdown_menu).click()
-        self.__dfx(xp.dropdown_menu_option(event_type)).click()
+        self.__dfx(f"//li[@data-original-index='{menu_code}']").click()
         self.__dfid(xp.submit).click()
         logging.info(f'Choose {event_type} from menu')
 
@@ -124,8 +125,7 @@ class Driver:
         logging.info(f'{event_type} links received')
 
         for action_type in zip((perfs_codes, rehs_codes), (PERFS, REHS)):
-            with open(
-                    f'{CODES_PATH}{event_type}_{action_type[1]}', 'w') as file:
+            with open(f'{CODES_PATH}{event_type}_{action_type[1]}', 'w') as file:
                 for code in sorted(action_type[0]):
                     file.write(code + '\n')
 
@@ -133,6 +133,7 @@ class Driver:
         """Gets all codes for the ballet and extras"""
         if not os.path.isdir(CODES_PATH):
             os.makedirs(CODES_PATH)
+
         self.__login()
 
         # Adds specific keywords for the ballet rehs and ballet skip part
@@ -165,6 +166,7 @@ class User:
         session = requests.Session()
         session.post(URL_LOGIN, {'UserName': USERNAME, 'Password': PASSWORD})
         logging.info('Session received')
+
         return session
 
     def __parse_table(self, event_code: str, event_type: str) -> List:
@@ -178,13 +180,13 @@ class User:
         time.sleep(random.randint(1, 2))
         menu_code = '?a=9' if event_type == BALLET else '?a=11'
         style_tag = 'padding-left: 5px; border: 1px solid gray;'
-        event_url = f'{URL_EVENT}{event_code}{menu_code}'
+        event_url = URL_EVENT + event_code + menu_code
         request = requests.post(event_url, cookies=self.session.cookies)
-        return bs4.BeautifulSoup(
-            request.text, 'lxml').find_all('td', style=style_tag)
 
-    def count_ballet(self, ballet_codes: Set, extras_codes: Set,
-                     action_type: str) -> Tuple[dict[str:int], dict[str:int]]:
+        return bs4.BeautifulSoup(request.text, 'lxml').find_all('td', style=style_tag)
+
+    def count_ballet(self, ballet_codes: Set, extras_codes: Set, action_type: str
+                     ) -> Tuple[dict[str:int], dict[str:int]]:
         """
         Parses html page with ballet codes.
         Args:
@@ -196,20 +198,16 @@ class User:
         feats, secures = {}, {}
         all_codes = ballet_codes.union(extras_codes)
 
-        for event_code in tqdm(all_codes, desc=f'{BALLET} {action_type}',
-                               bar_format=BAR_FORMAT, dynamic_ncols=True):
+        for event_code in tqdm(all_codes, desc=f'{BALLET} {action_type}', bar_format=BAR_FORMAT, dynamic_ncols=True):
             feat, secure = set(), set()
-            for event_type in zip((ballet_codes, extras_codes),
-                                  (BALLET, EXTRAS)):
+            for event_type in zip((ballet_codes, extras_codes), (BALLET, EXTRAS)):
                 if event_code in event_type[0]:
-                    self.__count_participants(
-                        event_type[1], event_code, feat, secure)
+                    self.__count_participants(event_type[1], event_code, feat, secure)
             self.__overflow_participants(feat, secure, feats, secures)
 
         return feats, secures
 
-    def count_extras(self, extras_codes: Set, action_type: str
-                     ) -> Tuple[dict[str:int], dict[str:int]]:
+    def count_extras(self, extras_codes: Set, action_type: str) -> Tuple[dict[str:int], dict[str:int]]:
         """
         Parses html page with extras codes.
         Args:
@@ -219,16 +217,14 @@ class User:
         """
         feats, secures = {}, {}
 
-        for event_code in tqdm(extras_codes, desc=f'{EXTRAS} {action_type}',
-                               bar_format=BAR_FORMAT, dynamic_ncols=True):
+        for event_code in tqdm(extras_codes, desc=f'{EXTRAS} {action_type}', bar_format=BAR_FORMAT, dynamic_ncols=True):
             feat, secure = set(), set()
             self.__count_participants(EXTRAS, event_code, feat, secure)
             self.__overflow_participants(feat, secure, feats, secures)
 
         return feats, secures
 
-    def __count_participants(self, event_type: str, event_code: str,
-                             feat: Set, secure: Set) -> None:
+    def __count_participants(self, event_type: str, event_code: str, feat: Set, secure: Set) -> None:
         """
         Counts number of participations in each event.
         Args:
@@ -236,15 +232,13 @@ class User:
             feat: names of featured participants
             secure: names of secure participants
         """
-        table = [person.text.strip() for person in
-                 self.__parse_table(event_code, event_type)]
+        table = [person.text.strip() for person in self.__parse_table(event_code, event_type)]
         person_feat, person_secure = self.__distribute_participants(table)
         feat.update(person_feat)
         secure.update(person_secure)
 
     @staticmethod
-    def __overflow_participants(feat: Set, secure: Set, events_feat: Dict,
-                                events_secure: Dict) -> None:
+    def __overflow_participants(feat: Set, secure: Set, events_feat: Dict, events_secure: Dict) -> None:
         """
         Overflows featured participants from secure event to feat event and
         add to corresponding dictionaries with event counters.
@@ -278,17 +272,18 @@ class User:
 
         for i in range(0, len(table), 3):
             if not any(part in table[i].lower() for part in skip_part):
+
                 feat_column = table[i + 1].split(',')
                 for person in feat_column:
                     feat.add(remove_brackets(person))
+
                 secure_column = table[i + 2].split(',')
                 for person in secure_column:
                     secure.add(remove_brackets(person))
 
         return feat, secure
 
-    def __get_all_codes(self, event_type: str, action_type: str
-                        ) -> Tuple[dict[str:int], dict[str:int]]:
+    def __get_all_codes(self, event_type: str, action_type: str) -> Tuple[dict[str:int], dict[str:int]]:
         """
         Gets all codes. For the ballet we need both ballet and extras codes.
         For the extras we need only extras codes.
@@ -297,10 +292,13 @@ class User:
         """
         with open(f'{CODES_PATH}{EXTRAS}_{action_type}') as codes:
             extras_codes = set(codes.read().split())
+
         if event_type == BALLET:
             with open(f'{CODES_PATH}{BALLET}_{action_type}') as codes:
                 ballet_codes = set(codes.read().split())
+
             return self.count_ballet(ballet_codes, extras_codes, action_type)
+
         return self.count_extras(extras_codes, action_type)
 
     def run_parser(self, event_type: str, action_type: str) -> None:
@@ -317,12 +315,12 @@ class User:
             # Remove empty values
             if '' in participation_type[0]:
                 del participation_type[0]['']
-            json_file = f'{JSON_PATH}{event_type}_{participation_type[1]}_' \
-                        f'{action_type}.json'
+            json_file = f'{JSON_PATH}{event_type}_{participation_type[1]}_{action_type}.json'
             with open(json_file, 'w', encoding='utf-8') as file:
-                json.dump(participation_type[0], file, indent=4,
-                          ensure_ascii=False)
+                json.dump(participation_type[0], file, indent=4, ensure_ascii=False)
 
+
+class Data:
     @staticmethod
     def aggregate_to_csv(event_type: str, gender: str) -> None:
         """Aggregates json to csv and writes to file."""
@@ -336,8 +334,7 @@ class User:
         column_index = 0
         for action_type in (PERFS, REHS):
             for participation_type in (FEAT, SECURE):
-                json_file = f'{JSON_PATH}{event_type}_{participation_type}_' \
-                            f'{action_type}.json'
+                json_file = f'{JSON_PATH}{event_type}_{participation_type}_{action_type}.json'
                 with open(json_file, encoding='utf-8') as file:
                     table = json.load(file)
                 for person in eval(event_and_sex):
@@ -352,8 +349,7 @@ class User:
 
         # Create rows with values ('C' - counter; sorted by perf feat C):
         # Name, perf feat C, perf secure C, reh feat C, reh secure C
-        rows = [[key, *value] for key, value in
-                sorted(new_table.items(), key=lambda x: x[1], reverse=True)]
+        rows = [[key, *value] for key, value in sorted(new_table.items(), key=lambda x: x[1], reverse=True)]
 
         if not os.path.isdir(CSV_PATH):
             os.makedirs(CSV_PATH)
@@ -372,9 +368,11 @@ class User:
         last_row_index = 66
 
         with open(csv_file, encoding='utf-8', newline='\n') as file:
+
             for row_index, row in enumerate(csv.reader(file), start=11):
                 for col_index, value in enumerate(row, start=1):
                     worksheet.cell(row_index, col_index).value = value
+
             # Remove excessive values
             for row in range(row_index, last_row_index):
                 if worksheet.cell(row, 1).value is None:

@@ -1,4 +1,10 @@
-from config import DATES
+from config import START_DATE, FINAL_DATE
+from utils import validate_dates
+
+if validate_dates(START_DATE, FINAL_DATE):
+    DATES = START_DATE + '-' + FINAL_DATE
+else:
+    raise ValueError("Final date shouldn't be earlier than the start date")
 
 # Paths
 CODES_PATH = f'./data/{DATES}/codes/'

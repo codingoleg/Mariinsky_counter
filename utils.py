@@ -18,9 +18,9 @@ def remove_brackets(text: str) -> str:
     return text.strip()
 
 
-def validate_dates(start_date: str, final_date: str) -> None:
+def validate_dates(start_date: str, final_date: str) -> bool:
     """Check for dates' validity"""
     start = datetime.strptime(start_date, '%d.%m.%Y')
     final = datetime.strptime(final_date, '%d.%m.%Y')
-    if final < start:
-        raise ValueError("Final date shouldn't be earlier than the start date")
+    return True if final < start else False
+
