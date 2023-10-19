@@ -31,6 +31,7 @@ import xpaths as xp
 from constants import DATES, CODES_PATH, JSON_PATH, CSV_PATH, XLS_PATH, WORKBOOK_PATH
 from constants import BALLET, EXTRAS, FEAT, SECURE, PERFS, REHS, BAR_FORMAT
 from config import USERNAME, PASSWORD, URL_LOGIN, URL_EVENT, START_DATE, FINAL_DATE
+from db.db import s, Book
 from utils import remove_brackets
 # staff.staff is required for eval(event_and_sex) in aggregate_to_csv function.
 from staff.staff import ballet_men, ballet_women, extras_men, extras_women
@@ -384,3 +385,17 @@ class Data:
         if not os.path.isdir(XLS_PATH):
             os.makedirs(XLS_PATH)
         workbook.save(filename=xls_file)
+
+    @staticmethod
+    def write_to_db(event_type: str, gender: str) -> None:
+        csv_file = f'{CSV_PATH}{event_type}_{gender}_{DATES}.csv'
+        with open(csv_file, encoding='utf-8', newline='\n') as file:
+            for name, feat_perfs, secure_perfs, feat_rehs, secure_rehs in csv.reader(file):
+                s.add(Book(
+                    name=name,
+                    feat_perfs=int(feat_perfs),
+                    secure_perfs=int(secure_perfs),
+                    feat_rehs=int(feat_rehs),
+                    secure_rehs=int(secure_rehs)
+                ))
+                s.commit()
