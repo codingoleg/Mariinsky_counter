@@ -3,3 +3,5 @@ openpyxl==3.1.2
 Requests==2.31.0
 selenium==4.10.0
 tqdm==4.65.0
+SQLAlchemy~=2.0.22
+python-dateutil~=2.8.2
