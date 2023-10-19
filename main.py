@@ -17,3 +17,4 @@ if __name__ == '__main__':
         for gender in (MEN, WOMEN):
             data.aggregate_to_csv(event_type, gender)
             data.write_to_xls(event_type, gender)
+            data.write_to_db(event_type, gender)
